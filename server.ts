@@ -339,38 +339,65 @@ Giải thích chính xác, logic, truyền cảm hứng bằng Tiếng Việt. P
 
 // 3. Endpoint Tạo Quiz trắc nghiệm tương tác & Ca lâm sàng
 app.post('/api/gemini/quiz', async (req: Request, res: Response) => {
-  const { content, subject = 'Y khoa', difficulty = 'medium', count = 5, questionType = 'mcq' } = req.body;
-  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+  const {
+    content = '',
+    topic = '',
+    subject = 'Y khoa',
+    difficulty = 'medium',
+    count = 5,
+    questionType,
+    type,
+  } = req.body || {};
+
+  const resolvedType = questionType || type || 'mcq';
+  const resolvedContent =
+    (typeof content === 'string' && content.trim()) ||
+    (typeof topic === 'string' && topic.trim()) ||
+    '';
+
+  if (!resolvedContent) {
     return res.status(400).json({ error: true, message: 'Vui lòng cung cấp nội dung hoặc chủ đề để tạo câu hỏi.' });
   }
 
   const clampedCount = Math.min(Math.max(Number(count) || 5, 2), 15);
 
-  const generateFallback = () => ({
-    quizTitle: `Bộ câu hỏi Ôn luyện: ${subject} (${difficulty.toUpperCase()})`,
-    description: `Bộ câu hỏi kiểm tra khả năng Active Recall và biện luận kiến thức về ${content.slice(0, 35)}...`,
-    questions: Array.from({ length: clampedCount }).map((_, idx) => ({
-      id: idx + 1,
-      type: questionType === 'vignette' ? 'vignette' : 'mcq',
-      question: questionType === 'vignette'
-        ? `[Ca lâm sàng ${idx + 1}] Bệnh nhân nam 45 tuổi nhập viện vì triệu chứng liên quan đến ${content.slice(0, 30)}. Xét nghiệm cho thấy bất thường chỉ số. Biện luận nào sau đây là phù hợp nhất?`
-        : `Câu hỏi ${idx + 1}: Đặc điểm sinh lý bệnh học nào sau đây là quan trọng nhất liên quan đến ${content.slice(0, 30)}?`,
-      options: [
-        'A. Cơ chế bù trừ qua trung gian thần kinh thể dịch làm thay đổi tính thấm.',
-        'B. Tăng áp lực thẩm thấu nội bào dẫn tới thoái hóa mô hạt cục bộ.',
-        'C. Ức chế chọn lọc thụ thể bề mặt màng tế bào đích.',
-        'D. Kích hoạt chuỗi phản ứng enzym phosphoryl hóa tầng.',
-      ],
-      correctAnswerIndex: (idx % 4),
-      explanation: 'Phương án được chọn phản ánh đúng cơ chế bệnh sinh học được mô tả trong y văn chuẩn mực.',
-      optionExplanations: [
-        'A: Đúng vì đáp ứng thể dịch diễn ra sớm nhất trong pha kích hoạt.',
-        'B: Sai vì áp lực thẩm thấu duy trì ổn định trong giai đoạn này.',
-        'C: Sai vì thụ thể không bị ức chế mà được tăng cường biểu hiện.',
-        'D: Sai vì quá trình phosphoryl hóa chỉ xảy ra ở pha tiếp theo.',
-      ],
-    })),
+  const formatQuizResponse = (raw: any) => ({
+    ...raw,
+    success: true,
+    quiz: {
+      title: raw.quizTitle || `Bộ câu hỏi: ${topic || subject}`,
+      description: raw.description || '',
+      questions: raw.questions || [],
+    },
   });
+
+  const generateFallback = () =>
+    formatQuizResponse({
+      quizTitle: `Bộ câu hỏi Ôn luyện: ${topic || subject} (${String(difficulty).toUpperCase()})`,
+      description: `Bộ câu hỏi kiểm tra khả năng Active Recall và biện luận kiến thức về ${resolvedContent.slice(0, 35)}...`,
+      questions: Array.from({ length: clampedCount }).map((_, idx) => ({
+        id: idx + 1,
+        type: resolvedType === 'vignette' ? 'vignette' : 'mcq',
+        question:
+          resolvedType === 'vignette'
+            ? `[Ca lâm sàng ${idx + 1}] Bệnh nhân nam 45 tuổi nhập viện vì triệu chứng liên quan đến ${resolvedContent.slice(0, 30)}. Xét nghiệm cho thấy bất thường chỉ số. Biện luận nào sau đây là phù hợp nhất?`
+            : `Câu hỏi ${idx + 1}: Đặc điểm sinh lý bệnh học nào sau đây là quan trọng nhất liên quan đến ${resolvedContent.slice(0, 30)}?`,
+        options: [
+          'A. Cơ chế bù trừ qua trung gian thần kinh thể dịch làm thay đổi tính thấm.',
+          'B. Tăng áp lực thẩm thấu nội bào dẫn tới thoái hóa mô hạt cục bộ.',
+          'C. Ức chế chọn lọc thụ thể bề mặt màng tế bào đích.',
+          'D. Kích hoạt chuỗi phản ứng enzym phosphoryl hóa tầng.',
+        ],
+        correctAnswerIndex: idx % 4,
+        explanation: 'Phương án được chọn phản ánh đúng cơ chế bệnh sinh học được mô tả trong y văn chuẩn mực.',
+        optionExplanations: [
+          'A: Đúng vì đáp ứng thể dịch diễn ra sớm nhất trong pha kích hoạt.',
+          'B: Sai vì áp lực thẩm thấu duy trì ổn định trong giai đoạn này.',
+          'C: Sai vì thụ thể không bị ức chế mà được tăng cường biểu hiện.',
+          'D: Sai vì quá trình phosphoryl hóa chỉ xảy ra ở pha tiếp theo.',
+        ],
+      })),
+    });
 
   if (!HAS_API_KEY) {
     return res.json(generateFallback());
@@ -395,11 +422,12 @@ app.post('/api/gemini/quiz', async (req: Request, res: Response) => {
       model: 'gemini-4-hydrogen',
       contents: `Hãy biên soạn bộ câu hỏi trắc nghiệm gồm ${clampedCount} câu chất lượng cao.
 Chuyên ngành: ${subject}
+Chủ đề: ${topic || subject}
 Độ khó: ${diffDesc[difficulty] || diffDesc.medium}
-Dạng câu hỏi: ${typeDesc[questionType] || typeDesc.mcq}
+Dạng câu hỏi: ${typeDesc[resolvedType] || typeDesc.mcq}
 
---- NỘI DUNG TÀI LIỆU ---
-${content}
+--- NỘI DUNG TÀI LIỆU / CHỦ ĐỀ ---
+${resolvedContent}
 --- HẾT NỘI DUNG ---`,
       config: {
         systemInstruction: `Bạn là Chủ tịch Hội đồng Khảo thí Đại học Y Dược (StudyMate AI).
@@ -438,7 +466,7 @@ Tất cả bằng Tiếng Việt. Trả về JSON theo đúng schema.`,
     });
 
     const parsed = JSON.parse(response.text || '{}');
-    return res.json(parsed);
+    return res.json(formatQuizResponse(parsed));
   } catch (error) {
     return handleGeminiError(error, res, generateFallback);
   }
@@ -446,32 +474,64 @@ Tất cả bằng Tiếng Việt. Trả về JSON theo đúng schema.`,
 
 // 4. Endpoint Lập Lộ trình Học tập Spaced Repetition & Pomodoro
 app.post('/api/gemini/roadmap', async (req: Request, res: Response) => {
-  const { goal, subject = 'Y khoa', timeframeDays = 7, hoursPerDay = 2, currentLevel = 'Sinh viên Y khoa', examDate = '' } = req.body;
-  if (!goal || typeof goal !== 'string' || goal.trim().length === 0) {
-    return res.status(400).json({ error: true, message: 'Vui lòng cung cấp mục tiêu học tập.' });
+  const {
+    goal = '',
+    subject = 'Y khoa',
+    timeframeDays,
+    days,
+    hoursPerDay,
+    dailyHours,
+    currentLevel = 'Sinh viên Y khoa',
+    examDate = '',
+  } = req.body || {};
+
+  const resolvedDays = Math.min(Math.max(Number(timeframeDays || days) || 7, 1), 30);
+  const resolvedHours = Math.max(Number(hoursPerDay || dailyHours) || 2, 0.5);
+  const resolvedGoal =
+    (typeof goal === 'string' && goal.trim()) ||
+    (subject ? `Ôn tập & làm chủ chuyên đề ${subject}` : '');
+
+  if (!resolvedGoal) {
+    return res.status(400).json({ error: true, message: 'Vui lòng cung cấp mục tiêu hoặc môn học.' });
   }
 
-  const generateFallback = () => ({
-    planTitle: `Lộ trình ${timeframeDays} ngày: ${goal}`,
-    methodology: 'Spaced Repetition (Lặp lại ngắt quãng Ngày 1, 3, 7) kết hợp Pomodoro tập trung sâu',
-    totalEstimatedPomodoros: timeframeDays * Math.round(Number(hoursPerDay) * 2),
-    milestones: Array.from({ length: Math.min(Number(timeframeDays), 14) }).map((_, i) => ({
-      day: i + 1,
-      focusArea: `Giai đoạn ${i + 1}: Trọng tâm kiến thức phần ${i + 1} của ${goal.slice(0, 30)}`,
-      pomodoroSessions: Math.round(Number(hoursPerDay) * 2),
-      tasks: [
-        { id: `t-${i}-1`, title: 'Chủ động đọc & Tóm tắt khái niệm nòng cốt', durationMinutes: 25, completed: false },
-        { id: `t-${i}-2`, title: 'Active Recall: Tự giải thích lại cơ chế sinh bệnh', durationMinutes: 25, reviewInterval: i > 0 ? `Ôn ngắt quãng Ngày ${Math.max(1, i - 1)}` : undefined, completed: false },
-        { id: `t-${i}-3`, title: 'Luyện 10 câu trắc nghiệm ca lâm sàng củng cố', durationMinutes: 25, completed: false },
-      ],
-      revisionTechnique: 'Phương pháp Feynman: Giải thích cho người học khác để lấp lỗ hổng kiến thức',
-    })),
-    studyTips: [
-      'Áp dụng chu kỳ Pomodoro 25 phút tập trung + 5 phút nghỉ ngơi tuyệt đối không nhìn màn hình.',
-      'Ôn lại bài cũ vào các ngày 1, 3, 7 để ký ức chuyển sang vùng lưu trữ dài hạn (Long-Term Potentiation).',
-      'Luôn tự kiểm tra (Practice Testing) trước khi xem lại đáp án.',
-    ],
+  const formatRoadmapResponse = (raw: any) => ({
+    ...raw,
+    success: true,
+    roadmap: {
+      title: raw.planTitle || `Lộ trình ${resolvedDays} ngày: ${subject}`,
+      methodology: raw.methodology || 'Spaced Repetition + Pomodoro',
+      dailyPlan: (raw.milestones || []).map((m: any) => ({
+        day: m.day,
+        focus: m.focusArea || 'Ôn tập trọng tâm',
+        interval: m.revisionTechnique || 'Lặp lại ngắt quãng',
+        tasks: (m.tasks || []).map((t: any) => (typeof t === 'string' ? t : t.title)),
+      })),
+    },
   });
+
+  const generateFallback = () =>
+    formatRoadmapResponse({
+      planTitle: `Lộ trình ${resolvedDays} ngày: ${resolvedGoal}`,
+      methodology: 'Spaced Repetition (Lặp lại ngắt quãng Ngày 1, 3, 7) kết hợp Pomodoro tập trung sâu',
+      totalEstimatedPomodoros: resolvedDays * Math.round(resolvedHours * 2),
+      milestones: Array.from({ length: Math.min(resolvedDays, 14) }).map((_, i) => ({
+        day: i + 1,
+        focusArea: `Giai đoạn ${i + 1}: Trọng tâm kiến thức phần ${i + 1} của ${resolvedGoal.slice(0, 30)}`,
+        pomodoroSessions: Math.round(resolvedHours * 2),
+        tasks: [
+          { id: `t-${i}-1`, title: 'Chủ động đọc & Tóm tắt khái niệm nòng cốt', durationMinutes: 25, completed: false },
+          { id: `t-${i}-2`, title: 'Active Recall: Tự giải thích lại cơ chế sinh bệnh', durationMinutes: 25, reviewInterval: i > 0 ? `Ôn ngắt quãng Ngày ${Math.max(1, i - 1)}` : undefined, completed: false },
+          { id: `t-${i}-3`, title: 'Luyện 10 câu trắc nghiệm ca lâm sàng củng cố', durationMinutes: 25, completed: false },
+        ],
+        revisionTechnique: 'Phương pháp Feynman: Giải thích cho người học khác để lấp lỗ hổng kiến thức',
+      })),
+      studyTips: [
+        'Áp dụng chu kỳ Pomodoro 25 phút tập trung + 5 phút nghỉ ngơi tuyệt đối không nhìn màn hình.',
+        'Ôn lại bài cũ vào các ngày 1, 3, 7 để ký ức chuyển sang vùng lưu trữ dài hạn (Long-Term Potentiation).',
+        'Luôn tự kiểm tra (Practice Testing) trước khi xem lại đáp án.',
+      ],
+    });
 
   if (!HAS_API_KEY) {
     return res.json(generateFallback());
@@ -481,10 +541,10 @@ app.post('/api/gemini/roadmap', async (req: Request, res: Response) => {
     const response = await ai.models.generateContent({
       model: 'gemini-4-hydrogen',
       contents: `Hãy thiết kế một lộ trình học tập cá nhân hóa chuẩn sư phạm:
-Mục tiêu: "${goal}"
+Mục tiêu: "${resolvedGoal}"
 Chuyên ngành: ${subject}
-Thời lượng: ${timeframeDays} ngày
-Thời gian mỗi ngày: ${hoursPerDay} giờ (${Math.round(hoursPerDay * 2)} phiên Pomodoro)
+Thời lượng: ${resolvedDays} ngày
+Thời gian mỗi ngày: ${resolvedHours} giờ (${Math.round(resolvedHours * 2)} phiên Pomodoro)
 Trình độ hiện tại: ${currentLevel}
 ${examDate ? `Ngày thi dự kiến: ${examDate}` : ''}`,
       config: {
@@ -535,7 +595,7 @@ Trả về JSON đúng cấu trúc.`,
     });
 
     const parsed = JSON.parse(response.text || '{}');
-    return res.json(parsed);
+    return res.json(formatRoadmapResponse(parsed));
   } catch (error) {
     return handleGeminiError(error, res, generateFallback);
   }
