@@ -541,6 +541,105 @@ Trả về JSON đúng cấu trúc.`,
   }
 });
 
+// 5. Endpoint Gemini Notebook — Hỏi đáp & Tổng hợp có trích dẫn nguồn trên kho tài liệu
+app.post('/api/gemini/notebook', async (req: Request, res: Response) => {
+  const { question = '', sources = [], mode = 'qa', history = [] } = req.body || {};
+
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return res.status(400).json({ error: true, message: 'Vui lòng chọn ít nhất 1 tài liệu nguồn trong kho lưu trữ.' });
+  }
+  if (!question || typeof question !== 'string' || question.trim().length === 0) {
+    return res.status(400).json({ error: true, message: 'Vui lòng nhập câu hỏi hoặc yêu cầu tổng hợp cho Gemini Notebook.' });
+  }
+
+  const normalizedSources = sources.slice(0, 12).map((src: any, idx: number) => ({
+    index: idx + 1,
+    title: String(src.title || `Nguồn ${idx + 1}`),
+    subject: String(src.subject || 'Chung'),
+    content: String(src.content || '').slice(0, 12000),
+  }));
+
+  const generateFallback = () => ({
+    answer: `Tổng hợp từ ${normalizedSources.length} tài liệu đã chọn (${normalizedSources.map((s) => `[${s.index}] ${s.title}`).join(', ')}):\n\nDựa trên kho lưu trữ hiện tại, các tài liệu tập trung vào cơ chế cốt lõi, dấu hiệu nhận biết và nguyên tắc xử trí/ứng dụng thực tiễn liên quan đến câu hỏi "${question}".`,
+    citations: normalizedSources.slice(0, 3).map((s) => ({
+      sourceTitle: s.title,
+      excerpt: s.content.slice(0, 140) + (s.content.length > 140 ? '...' : ''),
+    })),
+    keyInsights: [
+      'Đối chiếu nguyên lý cơ bản giữa các tài liệu nguồn đã chọn.',
+      'Lưu ý các chống chỉ định hoặc điểm dễ nhầm lẫn được ghi nhận trong tài liệu.',
+    ],
+    suggestedQuestions: [
+      'Hãy lập bảng so sánh các điểm khác biệt chính giữa những tài liệu nguồn đã chọn?',
+      'Tạo danh sách ôn tập nhanh (Study Guide) từ các nguồn này?',
+    ],
+  });
+
+  if (!HAS_API_KEY) {
+    return res.json(generateFallback());
+  }
+
+  try {
+    const modeDirectives: Record<string, string> = {
+      qa: 'Trả lời chính xác câu hỏi dựa hoàn toàn vào các tài liệu nguồn được cung cấp, kèm trích dẫn cụ thể [Nguồn X].',
+      study_guide: 'Biên soạn tài liệu hướng dẫn ôn tập (Study Guide) có hệ thống từ toàn bộ các nguồn đã chọn.',
+      briefing: 'Tạo bản tóm tắt tổng quan (Briefing Doc) nêu bật luận điểm chính, liên kết chéo giữa các nguồn và kết luận.',
+      compare: 'So sánh, đối chiếu điểm giống, khác và mối liên hệ lâm sàng/học thuật giữa các nguồn.',
+    };
+
+    const sourceContext = normalizedSources
+      .map(
+        (s) =>
+          `=== [Nguồn ${s.index}] ${s.title} (Môn: ${s.subject}) ===\n${s.content}\n=== Hết Nguồn ${s.index} ===`
+      )
+      .join('\n\n');
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: `Chế độ Notebook: ${modeDirectives[mode] || modeDirectives.qa}
+
+--- KHO TÀI LIỆU NGUỒN ---
+${sourceContext}
+--- HẾT KHO TÀI LIỆU ---
+
+${Array.isArray(history) && history.length > 0 ? `Lịch sử hỏi đáp trước đó:\n${JSON.stringify(history.slice(-6))}\n\n` : ''}Yêu cầu của người học: "${question.trim()}"`,
+      config: {
+        systemInstruction: `Bạn là Trợ lý Gemini Notebook của StudyMate AI (hoạt động tương tự NotebookLM).
+Quy tắc bắt buộc:
+1. Chỉ sử dụng thông tin có trong KHO TÀI LIỆU NGUỒN được cung cấp. Nếu tài liệu không đề cập khía cạnh nào, hãy nói rõ là không có trong nguồn thay vì tự suy diễn.
+2. Trích dẫn rõ nguồn bằng định dạng [Nguồn 1], [Nguồn 2]... ngay trong câu trả lời.
+3. Trả lời bằng Tiếng Việt rõ ràng, mạch lạc, có cấu trúc. Trả về đúng schema JSON.`,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            answer: { type: Type.STRING },
+            citations: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  sourceTitle: { type: Type.STRING },
+                  excerpt: { type: Type.STRING },
+                },
+                required: ['sourceTitle', 'excerpt'],
+              },
+            },
+            keyInsights: { type: Type.ARRAY, items: { type: Type.STRING } },
+            suggestedQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ['answer', 'citations', 'keyInsights', 'suggestedQuestions'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    return res.json(parsed);
+  } catch (error) {
+    return handleGeminiError(error, res, generateFallback);
+  }
+});
+
 // Production vs Development setup with Vite
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
