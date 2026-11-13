@@ -1,5 +1,7 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -15,17 +17,19 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '25mb' }));
 
-// Initialize GoogleGenAI SDK on server
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || '',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
-
 const HAS_API_KEY = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+
+// Initialize GoogleGenAI SDK on server only when API key is configured
+const ai = HAS_API_KEY
+  ? new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY || '',
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    })
+  : null;
 
 // Helper for error responses
 function handleGeminiError(error: any, res: Response, fallbackGenerator?: () => any) {
@@ -136,7 +140,7 @@ app.post('/api/gemini/summarize', async (req: Request, res: Response) => {
     takeawayAction: 'Vẽ sơ đồ tư duy cơ chế sinh bệnh và liên hệ với ca lâm sàng thực tế.',
   });
 
-  if (!HAS_API_KEY) {
+  if (!HAS_API_KEY || !ai) {
     return res.json(generateFallback());
   }
 
@@ -273,7 +277,7 @@ app.post('/api/gemini/explain', async (req: Request, res: Response) => {
     ],
   });
 
-  if (!HAS_API_KEY) {
+  if (!HAS_API_KEY || !ai) {
     return res.json(generateFallback());
   }
 
@@ -399,7 +403,7 @@ app.post('/api/gemini/quiz', async (req: Request, res: Response) => {
       })),
     });
 
-  if (!HAS_API_KEY) {
+  if (!HAS_API_KEY || !ai) {
     return res.json(generateFallback());
   }
 
@@ -533,7 +537,7 @@ app.post('/api/gemini/roadmap', async (req: Request, res: Response) => {
       ],
     });
 
-  if (!HAS_API_KEY) {
+  if (!HAS_API_KEY || !ai) {
     return res.json(generateFallback());
   }
 
@@ -635,7 +639,7 @@ app.post('/api/gemini/notebook', async (req: Request, res: Response) => {
     ],
   });
 
-  if (!HAS_API_KEY) {
+  if (!HAS_API_KEY || !ai) {
     return res.json(generateFallback());
   }
 
@@ -702,10 +706,16 @@ Quy tắc bắt buộc:
 
 // Production vs Development setup with Vite
 async function startServer() {
-  if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+  const distPath = path.resolve(__dirname, 'dist');
+  const distIndexPath = path.join(distPath, 'index.html');
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.npm_lifecycle_event === 'start' && fs.existsSync(distIndexPath));
+
+  if (isProduction) {
+    app.use(express.static(distPath));
+    app.get('*', (_req: Request, res: Response) => {
+      res.sendFile(distIndexPath);
     });
   } else {
     const { createServer: createViteServer } = await import('vite');
